@@ -239,7 +239,7 @@ jobs:
           restore-keys: |
             ${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}-bazel-
             ${{ inputs.android_version }}-${{ inputs.kernel_version }}-bazel-
-          
+
       - name: 缓存工具链
         id: cache-toolchain
         uses: actions/cache@v5
@@ -345,7 +345,7 @@ jobs:
           FORMATTED_BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.os_patch_level }}"
           echo "初始化 repo，分支: common-${FORMATTED_BRANCH}"
 
-          $REPO init --depth=1 -u https://github.com/yellowduck999/GKI-manifest.git -b common-${FORMATTED_BRANCH} --repo-rev=v2.16
+          $REPO init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-${FORMATTED_BRANCH} --repo-rev=v2.16
 
           REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common ${FORMATTED_BRANCH})
           DEFAULT_MANIFEST_PATH=.repo/manifests/default.xml
@@ -741,7 +741,7 @@ jobs:
           OS_PATCH_LEVEL: ${{ inputs.os_patch_level }}
           SUB_LEVEL: ${{ inputs.sub_level }}
         run: bash "$GITHUB_WORKSPACE/scripts/susfs_fixes/apply.sh"
-          
+
       - name: 克隆 Droidspaces 补丁仓库
         if: inputs.droidspaces != 'off'
         run: |
@@ -1753,7 +1753,7 @@ jobs:
               fi
             fi
           fi
-          
+
       - name: 编译内核
         id: compile_kernel
         uses: nick-fields/retry@v4
