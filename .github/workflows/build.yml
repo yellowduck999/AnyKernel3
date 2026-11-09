@@ -342,89 +342,70 @@ jobs:
         run: |
           git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-gnu-6.4.1.git gcc
 
-          FORMATTED_BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}-common"
-          MAX_ATTEMPTS=3
-          RETRY_DELAY=15
-          SYNC_TIMEOUT=15m
-          GKI_MIRROR="https://github.com/yellowduck999/GKI-Kernel-Source_Fetch"
-          TAG_FALLBACK=""
-          REMOTE_BRANCH=""
-          SRC_DIR="./common"
-          check_branch_and_tag() {
-              local ok=false
-              for _ in 1 2 3; do
-                  if REMOTE_BRANCH=$(git ls-remote "$GKI_MIRROR" "$FORMATTED_BRANCH"); then
-                      ok=true
-                      break
-                  fi
-                  sleep 5
-              done
-              if [ "$ok" != true ]; then
-                  echo "git ls-remote 查询分支 ${FORMATTED_BRANCH} 失败"
-                  return 1
-              fi
-              if grep -q deprecated <<< "$REMOTE_BRANCH"; then
-                  echo "检测到已弃用分支: $FORMATTED_BRANCH"
-                  FORMATTED_BRANCH="deprecated/${FORMATTED_BRANCH}"
-              elif [ -z "$REMOTE_BRANCH" ]; then
-                  echo "分支 $FORMATTED_BRANCH 不存在，尝试查找 _r* tag"
-                  latest_tag=$(git ls-remote "$GKI_MIRROR" "refs/tags/${FORMATTED_BRANCH}_r*" 2>/dev/null \
-                  | awk '{print $2}' | grep -v '\^{}$' | sed 's|refs/tags/||' \
-                  | awk -F'_r' '{print $NF+0, $0}' | sort -n | tail -n1 | cut -d' ' -f2- || true)
-                  if [ -z "$latest_tag" ]; then
-                      echo "::error::${FORMATTED_BRANCH} 分支和tag均不存在于镜像仓库"
-                      return 1
-                  fi
-                  echo "回退到tag: $latest_tag"
-                  FORMATTED_BRANCH="$latest_tag"
-                  TAG_FALLBACK="$latest_tag"
-              fi
-              return 0
-          }
-          attempt=1
-          while :; do
-              echo "第 $attempt/$MAX_ATTEMPTS 次拉取，ref: ${FORMATTED_BRANCH}"
-              df -h "$PWD" | tail -n +2 || true
-              rc=0
-              if check_branch_and_tag; then
-                  if [ -d "${SRC_DIR}/.git" ]; then
-                      echo "common目录仓库已存在，fetch + checkout"
-                      timeout -k 60 "$SYNC_TIMEOUT" bash -c "
-                      cd ${SRC_DIR} &&
-                      git fetch --depth=1 origin ${FORMATTED_BRANCH} &&
-                      git checkout ${FORMATTED_BRANCH}
-                      " || rc=$?
-                  else
-                      echo "全新clone --depth=1 到 ${SRC_DIR}"
-                      timeout -k 60 "$SYNC_TIMEOUT" git clone --depth=1 -b "${FORMATTED_BRANCH}" "$GKI_MIRROR" "${SRC_DIR}" || rc=$?
-                  fi
+          FORMATTED_BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.os_patch_level }}"
+          echo "初始化 repo，分支: common-${FORMATTED_BRANCH}"
 
-                  if [ "$rc" -eq 0 ]; then
-                      echo "内核源码同步成功（第 $attempt 次），源码位于 ${SRC_DIR}"
-                      break
-                  fi
-                  if [ "$rc" -eq 124 ]; then
-                      echo "git拉取超时 $SYNC_TIMEOUT"
-                  else
-                      echo "git拉取失败，退出码 $rc"
-                  fi
-              else
-                  rc=1
-              fi
+          $REPO init --depth=1 -u https://github.com/yellowduck999/GKI-manifest.git -b common-${FORMATTED_BRANCH} --repo-rev=v2.16
 
-              if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
-                  echo "::error::连续 $MAX_ATTEMPTS 次拉取失败"
-                  exit "$rc"
-              fi
-              if [ "$attempt" -eq $((MAX_ATTEMPTS -1)) ]; then
-                  echo "清空common目录，下次全新clone（保留gcc）"
-                  rm -rf "${SRC_DIR}"
-              fi
+          REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common ${FORMATTED_BRANCH})
+          DEFAULT_MANIFEST_PATH=.repo/manifests/default.xml
 
-              echo "${RETRY_DELAY}s 后重试"
-              sleep "$RETRY_DELAY"
-              attempt=$((attempt+1))
+          if grep -q deprecated <<< $REMOTE_BRANCH; then
+            echo "检测到已弃用的分支: $FORMATTED_BRANCH"
+            sed -i "s/\"${FORMATTED_BRANCH}\"/\"deprecated\/${FORMATTED_BRANCH}\"/g" $DEFAULT_MANIFEST_PATH
+          elif [[ -z "$REMOTE_BRANCH" ]]; then
+            echo "分支已被上游删除: ${FORMATTED_BRANCH}，回退到该月最新 ASB tag"
+            LATEST_R=$(git ls-remote https://android.googlesource.com/kernel/common "refs/tags/${FORMATTED_BRANCH}_r*" \
+              | grep -v '\^{}' \
+              | sed 's/.*_r//' \
+              | sort -n | tail -1)
+            if [[ -z "$LATEST_R" ]]; then
+              echo "::error::上游分支与月度 tag 均不存在: ${FORMATTED_BRANCH}"
+              exit 1
+            fi
+            LATEST_TAG="${FORMATTED_BRANCH}_r${LATEST_R}"
+            echo "使用 tag: ${LATEST_TAG}"
+            REMOTE_BRANCH="refs/tags/${LATEST_TAG}"
+            sed -i "s/\"${FORMATTED_BRANCH}\"/\"refs\/tags\/${LATEST_TAG}\"/g" $DEFAULT_MANIFEST_PATH
+          fi
+
+          # repo sync 支持断点续传：单次限时 20 分钟，超时或失败后清理残留进程重试，
+          # 已同步完成的项目在下次尝试中自动跳过；防止上游连接停滞挂满整个 job 时限
+          SYNC_OK=false
+          for SYNC_ATTEMPT in 1 2 3; do
+            echo "==> repo sync 第 ${SYNC_ATTEMPT}/3 次尝试"
+            if timeout --kill-after=30 20m $REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast; then
+              SYNC_OK=true
+              break
+            fi
+            # 可恢复的重试只写日志；连续三次失败仍由下方 error 注解报告
+            echo "repo sync 重试：第 ${SYNC_ATTEMPT}/3 次同步失败或超时，清理残留 git 进程后重试"
+            pkill -9 -f 'git-remote-https' 2>/dev/null || true
+            pkill -9 -f 'android\.googlesource\.com' 2>/dev/null || true
+            sleep 10
           done
+          if [ "$SYNC_OK" != "true" ]; then
+            echo "::error::repo sync 连续 3 次尝试均失败（上游连接停滞或不可用）"
+            exit 1
+          fi
+
+          # 完整性守卫：repo sync 断点续传偶发留下检出不完整的项目，表现为目录里
+          # 只剩零散文件、缺 BUILD 文件，bazel 加载阶段会报
+          # "Every .bzl file must have a corresponding package"。
+          # 只校验 kleaf/BUILD.bazel（Bazel 包标识）：kleaf 目录存在却无 BUILD 文件
+          # 一定意味着检出不完整。不要校验具体的 .bzl 文件——旧分支（如 6.1 用的
+          # main-kernel-build-2023）kleaf 目录本就不含较晚才加入的脚本，会误报。
+          for KLEAF_DIR in \
+            prebuilts/clang/host/linux-x86/kleaf \
+            build/kernel/kleaf; do
+            if [ -d "$KLEAF_DIR" ] && [ ! -f "$KLEAF_DIR/BUILD.bazel" ]; then
+              PROJECT_DIR="${KLEAF_DIR%/kleaf}"
+              echo "::warning title=repo sync 完整性守卫::$KLEAF_DIR 缺少 BUILD.bazel，检出不完整，重新同步 $PROJECT_DIR"
+              timeout --kill-after=30 20m $REPO sync -c --force-sync --fail-fast "$PROJECT_DIR" \
+                || echo "::warning title=repo sync 完整性守卫::重同步 $PROJECT_DIR 失败，继续构建"
+            fi
+          done
+
           echo "REMOTE_BRANCH=$REMOTE_BRANCH" >> $GITHUB_ENV
 
       - name: 提取实际子版本号
