@@ -345,7 +345,7 @@ jobs:
           FORMATTED_BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.os_patch_level }}"
           echo "初始化 repo，分支: common-${FORMATTED_BRANCH}"
 
-          $REPO init --depth=1 -u https://github.com/yellowduck999/GKI-manifest.git -b common-${FORMATTED_BRANCH} --repo-rev=v2.16
+          $REPO init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-${FORMATTED_BRANCH} --repo-rev=v2.16
 
           REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common ${FORMATTED_BRANCH})
           DEFAULT_MANIFEST_PATH=.repo/manifests/default.xml
@@ -405,7 +405,7 @@ jobs:
                 || echo "::warning title=repo sync 完整性守卫::重同步 $PROJECT_DIR 失败，继续构建"
             fi
           done
-          ls $KERNEL_ROOT
+
           echo "REMOTE_BRANCH=$REMOTE_BRANCH" >> $GITHUB_ENV
 
       - name: 提取实际子版本号
@@ -567,6 +567,13 @@ jobs:
               ;;
             "BakaSU")
               echo "添加 BakaSU..."
+              echo "PWD = $(pwd)"
+              echo "KERNEL_ROOT = $KERNEL_ROOT"
+              ls -la "$KERNEL_ROOT"
+              ls -la "$KERNEL_ROOT/common"
+              test -d "$KERNEL_ROOT/drivers" && echo "✅ 顶层有drivers" || echo "❌ 顶层没有drivers"
+              test -d "$KERNEL_ROOT/common/drivers" && echo "✅ common里面有drivers" || echo "❌ common里面没有drivers"
+
               curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash $BRANCH
               # 内核侧 KernelSU 检出到官方最新上传 Manager 构建的同一提交
               #（Kbuild 以 30700 + git 提交数 计算版本，与官方管理器 versionCode 同源同值），
