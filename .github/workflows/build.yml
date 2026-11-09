@@ -405,7 +405,7 @@ jobs:
                 || echo "::warning title=repo sync 完整性守卫::重同步 $PROJECT_DIR 失败，继续构建"
             fi
           done
-
+          ls $KERNEL_ROOT
           echo "REMOTE_BRANCH=$REMOTE_BRANCH" >> $GITHUB_ENV
 
       - name: 提取实际子版本号
