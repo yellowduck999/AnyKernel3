@@ -364,31 +364,7 @@ jobs:
               REMOTE_BRANCH_RAW=$(git ls-remote https://android.googlesource.com/kernel/common "${FORMATTED_BRANCH}" || true)
               DEFAULT_MANIFEST_PATH=.repo/manifests/default.xml
           
-              if [[ -n "${REMOTE_BRANCH_RAW}" ]]; then
-                if echo "${REMOTE_BRANCH_RAW}" | grep -qi "deprecated"; then
-                  echo "检测到已弃用的分支: $FORMATTED_BRANCH"
-                  sed -i "s/revision=\"${FORMATTED_BRANCH}\"/revision=\"deprecated\/${FORMATTED_BRANCH}\"/g" "${DEFAULT_MANIFEST_PATH}"
-                  REMOTE_BRANCH="deprecated/${FORMATTED_BRANCH}"
-                else
-                  echo "上游分支正常存在: ${FORMATTED_BRANCH}"
-                  REMOTE_BRANCH="${FORMATTED_BRANCH}"
-                fi
-              else
-                echo "分支已被上游删除: ${FORMATTED_BRANCH}，回退到该月最新 ASB tag"
-                LATEST_R=$(git ls-remote https://android.googlesource.com/kernel/common "refs/tags/${FORMATTED_BRANCH}_r*" \
-                  | grep -v '\^{}' \
-                  | sed -E 's/.*_r([0-9]+)$/\1/' \
-                  | sort -n | tail -1 || true)
-                if [[ -z "${LATEST_R}" ]]; then
-                  echo "::error::上游分支与月度 tag 均不存在: ${FORMATTED_BRANCH}"
-                  exit 1
-                fi
-                LATEST_TAG="${FORMATTED_BRANCH}_r${LATEST_R}"
-                echo "使用 tag: ${LATEST_TAG}"
-                REMOTE_BRANCH="${LATEST_TAG}"
-                sed -i "s/revision=\"${FORMATTED_BRANCH}\"/revision=\"${LATEST_TAG}\"/g" "${DEFAULT_MANIFEST_PATH}"
-              fi
-          
+             
               echo "===== 最终生效 manifest common 配置 ====="
               grep '<project path="common"' ${DEFAULT_MANIFEST_PATH}
               echo "REMOTE_BRANCH=${REMOTE_BRANCH}"
